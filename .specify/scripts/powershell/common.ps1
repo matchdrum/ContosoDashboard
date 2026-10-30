@@ -15,6 +15,71 @@ function Get-RepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "../../..")).Path
 }
 
+function Resolve-Template {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TemplateName,
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $templatePath = $null
+    $specifyCommand = Get-Command specify -ErrorAction SilentlyContinue
+    if ($specifyCommand) {
+        $previousColumns = $env:COLUMNS
+        try {
+            $env:COLUMNS = '240'
+            $resolution = & $specifyCommand.Source preset resolve $TemplateName 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $resolutionLine = $resolution | Where-Object { $_ -match "^\s*$([regex]::Escape($TemplateName)):\s*(.+)$" } | Select-Object -First 1
+                if ($resolutionLine -match "^\s*$([regex]::Escape($TemplateName)):\s*(.+)$") {
+                    $candidate = $matches[1].Trim()
+                    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                        $templatePath = (Resolve-Path -LiteralPath $candidate).Path
+                    }
+                }
+            }
+        } finally {
+            if ($null -eq $previousColumns) {
+                Remove-Item Env:COLUMNS -ErrorAction SilentlyContinue
+            } else {
+                $env:COLUMNS = $previousColumns
+            }
+        }
+    }
+
+    if (-not $templatePath) {
+        $fallbackPaths = @(
+            (Join-Path $RepoRoot ".specify/templates/overrides/$TemplateName.md"),
+            (Join-Path $RepoRoot ".specify/templates/$TemplateName.md")
+        )
+        $templatePath = $fallbackPaths |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            Select-Object -First 1
+        if ($templatePath) {
+            $templatePath = (Resolve-Path -LiteralPath $templatePath).Path
+        }
+    }
+
+    return $templatePath
+}
+
+function Resolve-TemplateContent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TemplateName,
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $templatePath = Resolve-Template -TemplateName $TemplateName -RepoRoot $RepoRoot
+    if (-not $templatePath) {
+        return $null
+    }
+
+    return [System.IO.File]::ReadAllText($templatePath)
+}
+
 function Get-CurrentBranch {
     # First check if SPECIFY_FEATURE environment variable is set
     if ($env:SPECIFY_FEATURE) {
@@ -134,4 +199,3 @@ function Test-DirHasFiles {
         return $false
     }
 }
-
